@@ -38,6 +38,7 @@ package kerb
 
 import (
 	"crypto/rand"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -187,6 +188,7 @@ func NewCredential(user, realm, pass string, cfg *CredConfig) (*Credential, erro
 	rerr, ok := err.(ErrRemote)
 
 	if err == nil {
+		fmt.Println("XXX B")
 		return nil, ErrProtocol
 	} else if !ok || rerr.ErrorCode() != KDC_ERR_PREAUTH_REQUIRED {
 		return nil, err
@@ -401,6 +403,7 @@ func (c *Credential) GetTicket(service string, cfg *TicketConfig) (*Ticket, erro
 			return tkt, nil
 		}
 
+		fmt.Println("XXX A")
 		return nil, ErrProtocol
 	}
 

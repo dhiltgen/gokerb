@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/binary"
+	"fmt"
 	"github.com/jmckaskill/asn1"
 	"io"
 	"time"
@@ -71,6 +72,7 @@ func mustDecodeGSSWrapper(data []byte) (asn1.ObjectIdentifier, []byte) {
 		// short length form
 
 	default:
+		fmt.Println("XXX C")
 		panic(ErrProtocol)
 	}
 
@@ -207,6 +209,7 @@ func (t *Ticket) Connect(rw io.ReadWriter, flags int) (gssrw io.ReadWriter, err 
 	case gssAppReply:
 		// continue below
 	default:
+		fmt.Println("XXX D")
 		panic(ErrProtocol)
 	}
 
@@ -683,6 +686,7 @@ func (c *Credential) Accept(rw io.ReadWriter, flags int) (gssrw io.ReadWriter, u
 	case saslConfidential:
 		g.conf = true
 	default:
+		fmt.Println("XXX E")
 		panic(ErrProtocol)
 	}
 

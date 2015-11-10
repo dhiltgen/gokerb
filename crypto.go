@@ -15,6 +15,7 @@ import (
 	"crypto/subtle"
 	"encoding/binary"
 	//"encoding/hex"
+	"fmt"
 	"golang.org/x/crypto/pbkdf2"
 	"hash"
 	"io"
@@ -117,6 +118,7 @@ func unkeyedSign(algo, usage int, data ...[]byte) ([]byte, error) {
 	case signMd4:
 		h = md4.New()
 	default:
+		fmt.Println("XXX unkeySign")
 		return nil, ErrProtocol
 	}
 
@@ -223,6 +225,7 @@ func (c *rc4hmac) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, er
 	switch usage {
 	case gssSequenceNumber:
 		if algo != cryptGssRc4Hmac && algo != cryptGssNone {
+			fmt.Println("XXX rc4hmac, sequence number")
 			return nil, ErrProtocol
 		}
 
@@ -232,6 +235,7 @@ func (c *rc4hmac) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, er
 		// GSS sealing uses an external checksum for integrity and
 		// since RC4 is symettric we can just reencrypt the data
 		if algo != cryptGssRc4Hmac {
+			fmt.Println("XXX rc4hmac wrap seal")
 			return nil, ErrProtocol
 		}
 
@@ -239,6 +243,7 @@ func (c *rc4hmac) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, er
 	}
 
 	if algo != cryptRc4Hmac || len(data) < 24 {
+		fmt.Printf("XXX rc4hmac algo/len algo=%v len=%d\n", algo, len(data))
 		return nil, ErrProtocol
 	}
 
@@ -264,6 +269,7 @@ func (c *rc4hmac) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, er
 
 	// Check the input checksum
 	if subtle.ConstantTimeCompare(chk, data[:16]) != 1 {
+		fmt.Println("XXX rc4hmac checksum")
 		return nil, ErrProtocol
 	}
 
@@ -474,10 +480,12 @@ func (s *descbc) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, err
 	case cryptDesCbcMd4:
 		h = md4.New()
 	default:
+		fmt.Println("XXX descbc algo")
 		return nil, ErrProtocol
 	}
 
 	if (len(data) & 7) != 0 {
+		fmt.Println("XXX descbc, len")
 		return nil, ErrProtocol
 	}
 
@@ -493,6 +501,7 @@ func (s *descbc) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, err
 	h.Sum(chk[:0])
 
 	if subtle.ConstantTimeCompare(chk, data[8:8+len(chk)]) != 1 {
+		fmt.Println("XXX descbc checksum")
 		return nil, ErrProtocol
 	}
 
@@ -518,6 +527,7 @@ type aeshmac struct {
 }
 
 func (s *aeshmac) Sign(algo, usage int, data ...[]byte) ([]byte, error) {
+	fmt.Println("XXX aeshmac.Sign not yet supported")
 	return nil, ErrProtocol
 }
 func (s *aeshmac) SignAlgo(usage int) int {
@@ -530,12 +540,15 @@ func (s *aeshmac) Encrypt(salt []byte, usage int, data ...[]byte) []byte {
 	const hashSize = 12
 	outsz := bb + hashSize
 	for _, d := range data {
+		//fmt.Printf("len d %d\n", len(d))
 		outsz += len(d)
 	}
+	//fmt.Printf("outsz %d\n", outsz)
 	ln := outsz % bb
 	if ln == 0 {
 		ln = bb
 	}
+	//fmt.Printf("ln %d\n", ln)
 
 	out := make([]byte, outsz)
 
@@ -550,6 +563,9 @@ func (s *aeshmac) Encrypt(salt []byte, usage int, data ...[]byte) []byte {
 	hash := h.Sum(nil)
 	copy(out[bb:], hash[:hashSize])
 
+	//fmt.Printf("Before encrypting\n")
+	//fmt.Println(hex.Dump(out))
+
 	iv := [bb]byte{}
 	b, err := aes.NewCipher(s.key)
 	if err != nil {
@@ -557,7 +573,10 @@ func (s *aeshmac) Encrypt(salt []byte, usage int, data ...[]byte) []byte {
 	}
 	c := cipher.NewCBCEncrypter(b, iv[:])
 
+	//fmt.Printf("len of initial block %d\n", outsz-bb-ln)
 	c.CryptBlocks(out[:outsz-bb-ln], out[:outsz-bb-ln])
+	//fmt.Printf("After initial encrypting\n")
+	//fmt.Println(hex.Dump(out))
 
 	// Final block
 	pn := [bb]byte{}
@@ -576,6 +595,9 @@ func (s *aeshmac) Encrypt(salt []byte, usage int, data ...[]byte) []byte {
 	copy(out[outsz-bb-ln:outsz-ln], cn[:])
 	copy(out[outsz-ln:outsz], cn1[:ln])
 
+	//fmt.Printf("After encrypting last two blocks\n")
+	//fmt.Println(hex.Dump(out))
+
 	return out
 }
 func (s *aeshmac) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, error) {
@@ -592,7 +614,11 @@ func (s *aeshmac) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, er
 	b, _ := aes.NewCipher(s.key)
 	c := cipher.NewCBCDecrypter(b, iv[:])
 
+	//fmt.Printf("Before decrypting\n")
+	//fmt.Println(hex.Dump(data))
 	c.CryptBlocks(data[:insz-bb-ln], data[:insz-bb-ln])
+	//fmt.Printf("After decrypting first chunk\n")
+	//fmt.Println(hex.Dump(data))
 
 	// Final block
 	cn := [bb]byte{}
@@ -618,14 +644,19 @@ func (s *aeshmac) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, er
 	copy(data[insz-bb-ln:insz-ln], pn1[:])
 	copy(data[insz-ln:], pn[:ln])
 
+	//fmt.Printf("After decrypting final\n")
+	//fmt.Println(hex.Dump(data))
+
 	// Verify checksum
 	chk := make([]byte, hashSize)
 	h.Write(data[:bb])
 	h.Write(chk) // Just need h.Size() zero bytes instead of the checksum
 	h.Write(data[bb+len(chk):])
 	chk = h.Sum(nil)
+	//fmt.Printf("Computed hash: %s", hex.Dump(chk[:hashSize]))
 
 	if subtle.ConstantTimeCompare(chk[:hashSize], data[bb:bb+hashSize]) != 1 {
+		fmt.Println("XXX aeshmac checksum")
 		return nil, ErrProtocol
 	}
 
@@ -686,9 +717,11 @@ func generateKey(algo int, rand io.Reader) (key, error) {
 		binary.BigEndian.PutUint64(k, u)
 		return loadKey(algo, k)
 	case cryptAes128CtsHmac, cryptAes256CtsHmac:
+		fmt.Println("XXX generateKey with cryptAes256CtsHmac not yet supported")
 		return nil, ErrProtocol
 	}
 
+	fmt.Println("XXX generateKey")
 	return nil, ErrProtocol
 }
 
@@ -701,17 +734,20 @@ func loadKey(algo int, key []byte) (key, error) {
 	case cryptAes128CtsHmac, cryptAes256CtsHmac:
 		return &aeshmac{key, algo}, nil
 	}
+	fmt.Println("XXX loadKey")
 	return nil, ErrProtocol
 }
 
 func loadStringKey(algo int, pass, salt string) (key, error) {
 	if len(pass) == 0 {
+		fmt.Println("XXX loadStringKey no pass")
 		return nil, ErrProtocol
 	}
 
 	switch algo {
 	case cryptRc4Hmac:
 		if len(salt) > 0 {
+			fmt.Println("XXX loadStringKey salt")
 			return nil, ErrProtocol
 		}
 		return &rc4hmac{rc4HmacKey(pass)}, nil
@@ -722,6 +758,7 @@ func loadStringKey(algo int, pass, salt string) (key, error) {
 		return &aeshmac{aeshmacKey(pass, salt, algo), algo}, nil
 	}
 
+	fmt.Println("XXX loadStringKey fallthru")
 	return nil, ErrProtocol
 }
 

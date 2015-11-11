@@ -14,7 +14,7 @@ import (
 	"crypto/sha1"
 	"crypto/subtle"
 	"encoding/binary"
-	"encoding/hex"
+	//"encoding/hex"
 	"fmt"
 	"golang.org/x/crypto/pbkdf2"
 	"hash"
@@ -608,24 +608,65 @@ func (s *aeshmac) SignAlgo(usage int) int {
 	return s.etype
 }
 
-func (s *aeshmac) Encrypt(salt []byte, usage int, data ...[]byte) []byte {
-	h := hmac.New(sha1.New, s.key)
+// RFC3962 AES CBC CTS encryption algorithm
+func aescbcctsEncrypt(key, data []byte) {
 	const bb = 16
-	const hashSize = 12
+	outsz := len(data)
+	ln := outsz % bb
+	if ln == 0 {
+		ln = bb
+	}
+
+	iv := [bb]byte{}
+	b, err := aes.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	c := cipher.NewCBCEncrypter(b, iv[:])
+
+	//fmt.Printf("len of initial block %d\n", outsz-bb-ln)
+	c.CryptBlocks(data[:outsz-bb-ln], data[:outsz-bb-ln])
+	//fmt.Printf("After initial encrypting\n")
+	//fmt.Println(hex.Dump(out))
+
+	// Final block
+	pn := [bb]byte{}
+	cn := [bb]byte{}
+	copy(pn[:], data[outsz-ln:outsz])
+
+	// penultimate block
+	pn1 := data[outsz-bb-ln : outsz-ln]
+	cn1 := [bb]byte{}
+
+	// Encrypt in order
+	c.CryptBlocks(cn1[:], pn1[:])
+	c.CryptBlocks(cn[:], pn[:])
+
+	// Swap the order in the final data
+	copy(data[outsz-bb-ln:outsz-ln], cn[:])
+	copy(data[outsz-ln:outsz], cn1[:ln])
+}
+
+func (s *aeshmac) Encrypt(salt []byte, usage int, data ...[]byte) []byte {
+	// RFC3961 section 5.3 - derived key
+	u := make([]byte, 5)
+	binary.BigEndian.PutUint32(u[:4], uint32(usage))
+	u[4] = 0xAA
+	k := DK(s.key, u)
+
+	h := hmac.New(sha1.New, k)
+	const bb = 16
+	const hashSize = 12 // truncated per spec
 	outsz := bb + hashSize
 	for _, d := range data {
 		//fmt.Printf("len d %d\n", len(d))
 		outsz += len(d)
 	}
 	//fmt.Printf("outsz %d\n", outsz)
-	ln := outsz % bb
-	if ln == 0 {
-		ln = bb
-	}
-	//fmt.Printf("ln %d\n", ln)
 
 	out := make([]byte, outsz)
 
+	// [hash][random block][payload...]
 	io.ReadFull(rand.Reader, out[hashSize:hashSize+bb])
 	v := out[bb+hashSize:]
 	for _, d := range data {
@@ -635,73 +676,38 @@ func (s *aeshmac) Encrypt(salt []byte, usage int, data ...[]byte) []byte {
 
 	h.Write(out[hashSize:])
 	hash := h.Sum(nil)
-	fmt.Printf("Encrypt: Computed hash: %s", hex.Dump(hash[:hashSize]))
+	//fmt.Printf("Encrypt: Computed hash: %s", hex.Dump(hash[:hashSize]))
 	copy(out[:hashSize], hash[:hashSize])
 
 	//fmt.Printf("Before encrypting\n")
 	//fmt.Println(hex.Dump(out))
 
-	iv := [bb]byte{}
-	b, err := aes.NewCipher(s.key)
-	if err != nil {
-		panic(err)
-	}
-	c := cipher.NewCBCEncrypter(b, iv[:])
+	aescbcctsEncrypt(k, out)
 
-	//fmt.Printf("len of initial block %d\n", outsz-bb-ln)
-	c.CryptBlocks(out[:outsz-bb-ln], out[:outsz-bb-ln])
-	//fmt.Printf("After initial encrypting\n")
+	//fmt.Printf("After encrypting\n")
 	//fmt.Println(hex.Dump(out))
-
-	// Final block
-	pn := [bb]byte{}
-	cn := [bb]byte{}
-	copy(pn[:], out[outsz-ln:outsz])
-
-	// penultimate block
-	pn1 := out[outsz-bb-ln : outsz-ln]
-	cn1 := [bb]byte{}
-
-	// Encrypt in order
-	c.CryptBlocks(cn1[:], pn1[:])
-	c.CryptBlocks(cn[:], pn[:])
-
-	// Swap the order in the final data
-	copy(out[outsz-bb-ln:outsz-ln], cn[:])
-	copy(out[outsz-ln:outsz], cn1[:ln])
-
-	//fmt.Printf("After encrypting last two blocks\n")
-	//fmt.Println(hex.Dump(out))
-
 	return out
 }
-func (s *aeshmac) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, error) {
-	fmt.Printf("XXX in aeshmac.Decrypt\n")
-	fmt.Printf("XXX s=%p\n", s)
-	fmt.Printf("XXX s.key=%v\n", s.key)
-	fmt.Printf("XXX data=%v\n", data)
-	h := hmac.New(sha1.New, s.key)
-	fmt.Printf("XXX new\n")
+
+// RFC3962 AES CBC CTS encryption algorithm
+func aescbcctsDecrypt(key, data []byte) {
 	const bb = 16
-	const hashSize = 12
 	insz := len(data)
 	ln := insz % bb
 	if ln == 0 {
 		ln = bb
 	}
-	fmt.Printf("XXX lengths\n")
 
 	iv := [bb]byte{}
-	fmt.Printf("XXX about to NewCipher\n")
-	b, _ := aes.NewCipher(s.key)
-	fmt.Printf("XXX about to NewCBCDecrypter\n")
+	b, err := aes.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
 	c := cipher.NewCBCDecrypter(b, iv[:])
 
-	fmt.Printf("Before decrypting\n")
-	fmt.Println(hex.Dump(data))
 	c.CryptBlocks(data[:insz-bb-ln], data[:insz-bb-ln])
-	fmt.Printf("After decrypting first chunk\n")
-	fmt.Println(hex.Dump(data))
+	//fmt.Printf("After decrypting first chunk\n")
+	//fmt.Println(hex.Dump(data))
 
 	// Final block
 	cn := [bb]byte{}
@@ -726,21 +732,46 @@ func (s *aeshmac) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, er
 	// Now append to output and truncate
 	copy(data[insz-bb-ln:insz-ln], pn1[:])
 	copy(data[insz-ln:], pn[:ln])
+}
 
-	fmt.Printf("After decrypting final\n")
-	fmt.Println(hex.Dump(data))
+func (s *aeshmac) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, error) {
+	// RFC3961 section 5.3 - derived key
+	u := make([]byte, 5)
+	binary.BigEndian.PutUint32(u[:4], uint32(usage))
+	u[4] = 0xAA
+	ke := DK(s.key, u)
+	u[4] = 0x55
+	ki := DK(s.key, u)
+
+	//fmt.Printf("XXX in aeshmac.Decrypt\n")
+	//fmt.Printf("XXX usage=%x\n", usage)
+	//fmt.Printf("XXX s.key=%v\n", s.key)
+	//fmt.Printf("XXX derived k=%v\n", k)
+	//fmt.Printf("XXX data=%v\n", data)
+	h := hmac.New(sha1.New, ki)
+	//fmt.Printf("XXX new\n")
+	const bb = 16
+	const hashSize = 12
+
+	//fmt.Printf("Before decrypting\n")
+	//fmt.Println(hex.Dump(data))
+
+	aescbcctsDecrypt(ke, data)
+
+	//fmt.Printf("After decrypting final\n")
+	//fmt.Println(hex.Dump(data))
 
 	// Verify checksum
 	chk := make([]byte, hashSize)
 	h.Write(data[hashSize:])
 	chk = h.Sum(nil)
-	fmt.Printf("Computed hash: %s", hex.Dump(chk[:hashSize]))
+	//fmt.Printf("Computed hash: %s", hex.Dump(chk[:hashSize]))
 
 	if subtle.ConstantTimeCompare(chk[:hashSize], data[:hashSize]) != 1 {
-		fmt.Println("XXX aeshmac checksum")
+		fmt.Println("XXX FAIL aeshmac checksum mismatch")
 		return nil, ErrProtocol
 	}
-	fmt.Printf("PASS!  hash looks good\n")
+	//fmt.Printf("PASS!  hash looks good\n")
 
 	return data[bb+hashSize:], nil
 }
@@ -752,13 +783,27 @@ func (s *aeshmac) Key() []byte {
 	return s.key
 }
 
+// RFC3961
+func DK(baseKey, constant []byte) []byte {
+	const bb = 16
+	// XXX If constant is >= 128 bits this will be incorrect!
+	constFold := NFold(constant, 128)
+	//fmt.Printf("XXX const: %s", hex.Dump(constant))
+	b, _ := aes.NewCipher(baseKey)
+	out := make([]byte, 32)
+	copy(out, constFold)
+	b.Encrypt(out, out)
+	b.Encrypt(out[bb:], out[:bb])
+	return out
+}
+
 // aesmacKey converts a UTF8 password+salt into a key suitable for use with the
 // aeshmac.
 func aeshmacKey(password, salt string, iterations, usage int) []byte {
 	const bb = 16
 	// HACK
-	salt = "AD.DCKR.ORGdtradmin1"
-	fmt.Printf("XXX Generating key from password %s and salt %s\n", password, salt)
+	//salt = "AD.DCKR.ORGdtradmin1"
+	//fmt.Printf("XXX Generating key from password %s and salt %s\n", password, salt)
 	var keyLen int
 	// XXX RFC3962 is a little vague - 4096 looks right, but there's a
 	// string-to-key parameter - where does that come from?
@@ -778,13 +823,7 @@ func aeshmacKey(password, salt string, iterations, usage int) []byte {
 	hashFunc := sha1.New
 	tkey := pbkdf2.Key([]byte(password), []byte(salt), iterations, keyLen, hashFunc)
 	//fmt.Printf("XXX pbkdf2 result: %s", hex.Dump(tkey))
-	constant := NFold([]byte("kerberos"), 128)
-	//fmt.Printf("XXX const: %s", hex.Dump(constant))
-	b, _ := aes.NewCipher(tkey)
-	out := make([]byte, 32)
-	copy(out, constant)
-	b.Encrypt(out, out)
-	b.Encrypt(out[bb:], out[:bb])
+	out := DK(tkey, []byte("kerberos"))
 	//fmt.Printf("XXX output key: %s", hex.Dump(out))
 	return out[:keyLen]
 }

@@ -5,7 +5,7 @@ import (
 	"crypto/md5"
 	"crypto/rand"
 	"encoding/binary"
-	"encoding/hex"
+	//"encoding/hex"
 	"errors"
 	"fmt"
 	"github.com/jmckaskill/asn1"
@@ -43,7 +43,7 @@ func domd5(d []byte) []byte {
 func (c *conn) Write(d []byte) (n int, err error) {
 	//defer recoverMust(&err)
 
-	fmt.Printf("d: %s", hex.Dump(d))
+	//fmt.Printf("d: %s", hex.Dump(d))
 	if c.proto == "tcp" {
 		must(len(d) >= 4)
 		sz := int(binary.BigEndian.Uint32(d))

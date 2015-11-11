@@ -232,7 +232,7 @@ func NewCredential(user, realm, pass string, cfg *CredConfig) (*Credential, erro
 	c := newCredential(client, realm, nil, 0, cfg)
 	c.keyPassword = pass
 
-	fmt.Printf("XXX pass in NewCredential: %s\n", pass)
+	//fmt.Printf("XXX pass in NewCredential: %s\n", pass)
 	r := request{
 		cfg:         c.cfg,
 		flags:       defaultLoginFlags,
@@ -296,7 +296,7 @@ func (c *Credential) lookupCache(tbl map[string]*Ticket, key string, till time.T
 // realm. It will send an AS_REQ to get the initial ticket in the credential's
 // realm if no valid tgt ticket in the cache can be found.
 func (c *Credential) getTgt(realm string, ctill time.Time) (*Ticket, string, error) {
-	fmt.Printf("XXX in getTgt\n")
+	//fmt.Printf("XXX in getTgt\n")
 	// TGS_REQ using the remote realm
 	if tgt := c.lookupCache(c.tgt, realm, ctill, 0); tgt != nil {
 		return tgt, realm, nil
@@ -383,7 +383,7 @@ var DefaultTicketConfig = TicketConfig{
 // returned ticket may not have all the flags if the domain policy forbids
 // some of them. Valid flag values are of the form Ticket*.
 func (c *Credential) GetTicket(service string, cfg *TicketConfig) (*Ticket, error) {
-	fmt.Printf("XXX in GetTicket\n")
+	//fmt.Printf("XXX in GetTicket\n")
 	// One of a number of possiblities:
 	// 1. Init state (no keys) user is requesting service key. Send AS_REQ then send TGS_REQ.
 	// 2. Init state (no keys) user is requesting krbtgt key. Send AS_REQ, find krbtgt key in cache.

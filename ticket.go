@@ -325,7 +325,8 @@ func (r *request) recvReply() (tkt *Ticket, err error) {
 		Addresses         []address           `asn1:"optional,explicit,tag:9"`
 		AuthorizationData []authorizationData `asn1:"optional,explicit,tag:10"`
 	}
-	tkey, err := loadStringKey(kerbTicket.Encrypted.Algo, r.keyPassword, r.keySalt)
+	//tkey, err := loadStringKey(kerbTicket.Encrypted.Algo, r.keyPassword, r.keySalt)
+	tkey, err := loadStringKey(kerbTicket.Encrypted.Algo, r.keyPassword, "AD.DCKR.ORGdtradmin1")
 	if err != nil {
 		fmt.Printf("Failed to load Key: %s\n", err)
 		return nil, err

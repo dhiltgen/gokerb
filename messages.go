@@ -132,8 +132,8 @@ const (
 	_
 	_
 	_
-	_
-	_
+	paPkAsRepOld
+	paPkAsReqType
 	_
 	_
 	paETypeInfo2
@@ -377,8 +377,9 @@ type eTypeInfo struct {
 }
 
 type eTypeInfo2 struct {
-	EType int    `asn1:"explicit,tag:0"`
-	Salt  string `asn1:"explicit,tag:1,optional"`
+	EType     int    `asn1:"explicit,tag:0"`
+	Salt      string `asn1:"explicit,tag:1,optional"`
+	S2KParams []byte `asn1:"explicit,tag:2,optional"`
 }
 
 type encryptedTicket struct {
@@ -505,6 +506,33 @@ type negTokenReply struct {
 	State     int                   `asn1:"optional,explicit,tag:0,default:-1"`
 	Mechanism asn1.ObjectIdentifier `asn1:"optional,explicit,tag:1"`
 	Response  []byte                `asn1:"optional,explicit,tag:2"`
+}
+
+type externalPrincipalIdentifier struct {
+	SubjectName           string `asn1:"implicit,tag:0"`
+	IssuerAndSerialNumber string `asn1:"implicit,optional,tag:1"`
+	SubjectKeyIdentifier  string `asn1:"implicit,optional,tag:2"`
+}
+
+type authPack struct {
+	PkAuthenticator   []byte `asn1:"explicit,tag:0"`
+	ClientPublicValue []byte `asn1:"explicit,optional,tag:1"`
+	SupportedCMSTypes []byte `asn1:"explicit,optional,tag:2"`
+	ClientDHNonce     []byte `asn1:"explicit,optional,tag:3"`
+}
+
+type contentInfo struct {
+	ContentType int    `asn1:"explicit,tag:0"`
+	Content     []byte `asn1:"explicit,tag:1"`
+}
+
+// rfc4556 3.2.1
+type paPkAsReq struct {
+	//SignedAuthPack    contentInfo                   `asn1:"implicit,tag:0"` // ContentInfo RFC3852
+	SignedAuthPack []byte `asn1:"implicit,tag:0"` // ContentInfo RFC3852
+	//TrustedCertifiers []byte `asn1:"optional,tag:1"`
+	//TrustedCertifiers []externalPrincipalIdentifier `asn1:"explicit,optional,tag:1"`
+	//KdcPkId string `asn1:"implicit,optional,tag:2"`
 }
 
 func nameEquals(a, b principalName) bool {

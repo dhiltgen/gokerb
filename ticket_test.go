@@ -291,11 +291,11 @@ var saltTests = []struct {
 	et     []eTypeInfo
 	pasalt []byte
 }{
-	{cryptRc4Hmac, "", []eTypeInfo2{{cryptRc4Hmac, ""}}, nil, nil},
-	{cryptDesCbcMd5, "", []eTypeInfo2{{cryptDesCbcMd5, ""}}, nil, nil},
-	{cryptDesCbcMd5, "salt", []eTypeInfo2{{cryptDesCbcMd5, "salt"}}, nil, nil},
+	{cryptRc4Hmac, "", []eTypeInfo2{{cryptRc4Hmac, "", nil}}, nil, nil},
+	{cryptDesCbcMd5, "", []eTypeInfo2{{cryptDesCbcMd5, "", nil}}, nil, nil},
+	{cryptDesCbcMd5, "salt", []eTypeInfo2{{cryptDesCbcMd5, "salt", nil}}, nil, nil},
 	{cryptDesCbcMd5, "salt", nil, []eTypeInfo{{cryptDesCbcMd5, []byte("salt")}}, nil},
-	{cryptRc4Hmac, "", []eTypeInfo2{{cryptRc4Hmac, ""}}, nil, []byte("salt")},
+	{cryptRc4Hmac, "", []eTypeInfo2{{cryptRc4Hmac, "", nil}}, nil, []byte("salt")},
 	{cryptDesCbcMd5, "salt", nil, nil, []byte("salt")},
 }
 

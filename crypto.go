@@ -14,7 +14,7 @@ import (
 	"crypto/sha1"
 	"crypto/subtle"
 	"encoding/binary"
-	//"encoding/hex"
+	"encoding/hex"
 	"fmt"
 	"golang.org/x/crypto/pbkdf2"
 	"hash"
@@ -361,6 +361,80 @@ func desStringKey(password, salt string) []byte {
 	return k
 }
 
+// Translated to go from krb5 lib/crypto/krb/nfold.c
+func NFold(in []byte, outbits uint) []byte {
+	var a, b, c, lcm uint
+	var thisByte, msbit uint
+
+	/* the code below is more readable if I make these bytes
+	   instead of bits */
+	inbits := uint(len(in))
+	outbits >>= 3
+
+	/* first compute lcm(n,k) */
+
+	a = outbits
+	b = inbits
+
+	for b != 0 {
+		c = b
+		b = a % b
+		a = c
+	}
+
+	lcm = outbits * inbits / a
+
+	/* now do the real work */
+
+	out := make([]byte, outbits)
+	thisByte = 0
+
+	/* this will end up cycling through k lcm(k,n)/k times, which
+	   is correct */
+	for i := int(lcm - 1); i >= 0; i-- {
+		/* compute the msbit in k which gets added into this byte */
+		msbit = ( /* first, start with the msbit in the first, unrotated
+		   byte */
+		((inbits << 3) - 1) +
+			/* then, for each byte, shift to the right for each
+			   repetition */
+			(((inbits << 3) + 13) * (uint(i) / inbits)) +
+			/* last, pick out the correct byte within that
+			   shifted repetition */
+			((inbits - (uint(i) % inbits)) << 3)) % (inbits << 3)
+
+		/* pull out the byte value itself */
+		thisByte += (((uint(in[((inbits-1)-(msbit>>3))%inbits]) << 8) | (uint(in[((inbits)-(msbit>>3))%inbits]))) >> ((msbit & 7) + 1)) & 0xff
+
+		/* do the addition */
+		thisByte += uint(out[uint(i)%outbits])
+		out[uint(i)%outbits] = byte(thisByte & 0xff)
+
+		/*
+			fmt.Printf("msbit[%d] = %d\tbyte = %02x\tsum = %03x\n\n", i, msbit,
+				(((in[((inbits-1)-(msbit>>3))%inbits]<<8)|(in[((inbits)-(msbit>>3))%inbits]))>>((msbit&7)+1))&0xff, thisByte)
+		*/
+
+		/* keep around the carry bit, if any */
+		thisByte >>= 8
+
+		//fmt.Printf("carry=%d\n", thisByte)
+	}
+
+	/* if there's a carry bit left over, add it back in */
+	if thisByte > 0 {
+		for i := int(outbits - 1); i >= 0; i-- {
+			/* do the addition */
+			thisByte += uint(out[i])
+			out[i] = byte(thisByte & 0xff)
+
+			/* keep around the carry bit, if any */
+			thisByte >>= 8
+		}
+	}
+	return out
+}
+
 type descbc struct {
 	key   []byte
 	etype int
@@ -601,7 +675,12 @@ func (s *aeshmac) Encrypt(salt []byte, usage int, data ...[]byte) []byte {
 	return out
 }
 func (s *aeshmac) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, error) {
+	fmt.Printf("XXX in aeshmac.Decrypt\n")
+	fmt.Printf("XXX s=%p\n", s)
+	fmt.Printf("XXX s.key=%v\n", s.key)
+	fmt.Printf("XXX data=%v\n", data)
 	h := hmac.New(sha1.New, s.key)
+	fmt.Printf("XXX new\n")
 	const bb = 16
 	const hashSize = 12
 	insz := len(data)
@@ -609,16 +688,19 @@ func (s *aeshmac) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, er
 	if ln == 0 {
 		ln = bb
 	}
+	fmt.Printf("XXX lengths\n")
 
 	iv := [bb]byte{}
+	fmt.Printf("XXX about to NewCipher\n")
 	b, _ := aes.NewCipher(s.key)
+	fmt.Printf("XXX about to NewCBCDecrypter\n")
 	c := cipher.NewCBCDecrypter(b, iv[:])
 
-	//fmt.Printf("Before decrypting\n")
-	//fmt.Println(hex.Dump(data))
+	fmt.Printf("Before decrypting\n")
+	fmt.Println(hex.Dump(data))
 	c.CryptBlocks(data[:insz-bb-ln], data[:insz-bb-ln])
-	//fmt.Printf("After decrypting first chunk\n")
-	//fmt.Println(hex.Dump(data))
+	fmt.Printf("After decrypting first chunk\n")
+	fmt.Println(hex.Dump(data))
 
 	// Final block
 	cn := [bb]byte{}
@@ -644,8 +726,8 @@ func (s *aeshmac) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, er
 	copy(data[insz-bb-ln:insz-ln], pn1[:])
 	copy(data[insz-ln:], pn[:ln])
 
-	//fmt.Printf("After decrypting final\n")
-	//fmt.Println(hex.Dump(data))
+	fmt.Printf("After decrypting final\n")
+	fmt.Println(hex.Dump(data))
 
 	// Verify checksum
 	chk := make([]byte, hashSize)
@@ -653,7 +735,7 @@ func (s *aeshmac) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, er
 	h.Write(chk) // Just need h.Size() zero bytes instead of the checksum
 	h.Write(data[bb+len(chk):])
 	chk = h.Sum(nil)
-	//fmt.Printf("Computed hash: %s", hex.Dump(chk[:hashSize]))
+	fmt.Printf("Computed hash: %s", hex.Dump(chk[:hashSize]))
 
 	if subtle.ConstantTimeCompare(chk[:hashSize], data[bb:bb+hashSize]) != 1 {
 		fmt.Println("XXX aeshmac checksum")
@@ -672,8 +754,10 @@ func (s *aeshmac) Key() []byte {
 
 // aesmacKey converts a UTF8 password+salt into a key suitable for use with the
 // aeshmac.
-func aeshmacKey(password, salt string, usage int) []byte {
-	var iter int
+func aeshmacKey(password, salt string, iterations, usage int) []byte {
+	const bb = 16
+	fmt.Printf("XXX Generating key from password %s and salt %s\n", password, salt)
+	// HACK
 	var keyLen int
 	// XXX RFC3962 is a little vague - 4096 looks right, but there's a
 	// string-to-key parameter - where does that come from?
@@ -681,10 +765,8 @@ func aeshmacKey(password, salt string, usage int) []byte {
 	// ETYPE-INFO2 -> s2k-params for AES would list iteration count
 	switch usage {
 	case cryptAes128CtsHmac:
-		iter = 4096
 		keyLen = 24
 	case cryptAes256CtsHmac:
-		iter = 4096
 		keyLen = 32
 	}
 
@@ -693,8 +775,21 @@ func aeshmacKey(password, salt string, usage int) []byte {
 	// tkey = random2key(PBKDF2(passphrase, salt, iter_count, keylength))
 	// key = DK(tkey, "kerberos")
 	hashFunc := sha1.New
-	tkey := pbkdf2.Key([]byte(password), []byte(salt), iter, keyLen, hashFunc)
-	return desStringKey(string(tkey), "kerberos")
+	tkey := pbkdf2.Key([]byte(password), []byte(salt), iterations, keyLen, hashFunc)
+	fmt.Printf("XXX pbkdf2 result: %s", hex.Dump(tkey))
+	constant := NFold([]byte("kerberos"), 128)
+	fmt.Printf("XXX const: %s", hex.Dump(constant))
+	b, _ := aes.NewCipher(tkey)
+	//iv := [bb]byte{}
+	//c := cipher.NewCBCDecrypter(b, iv[:])
+	out := make([]byte, 32)
+	copy(out, constant)
+	b.Encrypt(out, out)
+	b.Encrypt(out[bb:], out[:bb])
+	//c.CryptBlocks(out, out)
+	//c.CryptBlocks(out[bb:], out[:bb])
+	fmt.Printf("XXX output key: %s", hex.Dump(out))
+	return out[:keyLen]
 }
 
 func generateKey(algo int, rand io.Reader) (key, error) {
@@ -755,7 +850,7 @@ func loadStringKey(algo int, pass, salt string) (key, error) {
 	case cryptDesCbcMd4, cryptDesCbcMd5:
 		return &descbc{desStringKey(pass, salt), algo}, nil
 	case cryptAes128CtsHmac, cryptAes256CtsHmac:
-		return &aeshmac{aeshmacKey(pass, salt, algo), algo}, nil
+		return &aeshmac{aeshmacKey(pass, salt, 4096, algo), algo}, nil // XXX lookup iterations from kerb
 	}
 
 	fmt.Println("XXX loadStringKey fallthru")

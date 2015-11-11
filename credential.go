@@ -38,6 +38,7 @@ package kerb
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"strings"
@@ -50,6 +51,59 @@ func chooseAlgorithm(msg *errorMessage) (etype int, salt string, err error) {
 
 	var padata []preauth
 	mustUnmarshal(msg.ErrorData, &padata, "")
+	for _, pa := range padata {
+		fmt.Printf("XXX Pre-auth type: %d\n", pa.Type)
+		if pa.Type == paETypeInfo2 {
+
+			var types []eTypeInfo2
+			mustUnmarshal(pa.Data, &types, "")
+			for _, t := range types {
+				fmt.Printf("    EType: %d  Salt: %s  S2KParams: %v\n", t.EType, t.Salt, t.S2KParams)
+			}
+		} else if pa.Type == paETypeInfo {
+
+			var types []eTypeInfo
+			mustUnmarshal(pa.Data, &types, "")
+
+			for _, t := range types {
+				fmt.Printf("    EType: %d  Salt: %s\n", t.EType, t.Salt)
+			}
+		} else if pa.Type == paEncryptedTimestamp {
+			fmt.Printf("    PA-ENC-TIMESTAMP: %s\n", hex.Dump(pa.Data))
+			/*  Doesn't work - encrypted with what?
+			var ts encryptedTimestamp
+			mustUnmarshal(pa.Data, &ts, "")
+			fmt.Printf("    Time: %v  Microseconds: %d\n", ts.Time, ts.Microseconds)
+			*/
+		} else if pa.Type == paPkAsReqType {
+			fmt.Printf("    PA-PK-AS-REQ: %s\n", hex.Dump(pa.Data))
+			//var asReq paPkAsReq
+			//mustUnmarshal(pa.Data, &asReq, "")
+			//fmt.Printf("    SignedAuthPack: %v\n", asReq.SignedAuthPack)
+		} else if pa.Type == paPkAsRepOld {
+			fmt.Printf("    PA-PK-AS-REP_OLD: %s\n", hex.Dump(pa.Data))
+		}
+		/*
+		   type authPack struct {
+		   	PkAuthenticator   []byte `asn1:"explicit,tag:0"`
+		   	ClientPublicValue []byte `asn1:"explicit,optional,tag:1"`
+		   	SupportedCMSTypes []byte `asn1:"explicit,optional,tag:2"`
+		   	ClientDHNonce     []byte `asn1:"explicit,optional,tag:3"`
+		   }
+
+		   type contentInfo struct {
+		   	ContentType int    `asn1:"explicit,tag:0"`
+		   	Content     []byte `asn1:"explicit,tag:1"`
+		   }
+
+		   // rfc4556 3.2.1
+		   type paPkAsReq struct {
+		   	SignedAuthPack    contentInfo                   `asn1:"implicit,tag:0"` // ContentInfo RFC3852
+		   	TrustedCertifiers []externalPrincipalIdentifier `asn1:"explicit,optional,tag:1"`
+		   	KdcPkId           string                        `asn1:"implicit,optional,tag:1"`
+		   }
+		*/
+	}
 
 	for _, algo := range supportedAlgorithms {
 		for _, pa := range padata {
@@ -135,11 +189,13 @@ func (c *CredConfig) rand() io.Reader {
 // created from a credential cache as the cache doesn't store the user
 // password in any form.
 type Credential struct {
-	cfg       *CredConfig
-	key       key
-	kvno      int
-	principal principalName
-	realm     string
+	cfg         *CredConfig
+	key         key
+	keyPassword string // XXX Not ideal - but we need to generate secondar keys for different algo's
+	keySalt     string // XXX Not ideal...
+	kvno        int
+	principal   principalName
+	realm       string
 
 	lk              sync.Mutex
 	cache           map[string]*Ticket
@@ -174,14 +230,18 @@ func NewCredential(user, realm, pass string, cfg *CredConfig) (*Credential, erro
 	realm = strings.ToUpper(realm)
 	client := principalName{principalNameType, strings.Split(user, "/")}
 	c := newCredential(client, realm, nil, 0, cfg)
+	c.keyPassword = pass
 
+	fmt.Printf("XXX pass in NewCredential: %s\n", pass)
 	r := request{
-		cfg:     c.cfg,
-		flags:   defaultLoginFlags,
-		client:  client,
-		crealm:  realm,
-		service: principalName{principalNameType, []string{"krbtgt", realm}},
-		srealm:  realm,
+		cfg:         c.cfg,
+		flags:       defaultLoginFlags,
+		client:      client,
+		crealm:      realm,
+		service:     principalName{principalNameType, []string{"krbtgt", realm}},
+		srealm:      realm,
+		keyPassword: c.keyPassword,
+		keySalt:     c.keySalt,
 	}
 
 	_, err := r.do()
@@ -194,10 +254,12 @@ func NewCredential(user, realm, pass string, cfg *CredConfig) (*Credential, erro
 		return nil, err
 	}
 
+	fmt.Printf("XXX about to choose algorithm\n")
 	etype, salt, err := chooseAlgorithm(rerr.msg)
 	if err != nil {
 		return nil, err
 	}
+	c.keySalt = salt
 
 	c.key, err = loadStringKey(etype, pass, salt)
 	if err != nil {
@@ -234,6 +296,7 @@ func (c *Credential) lookupCache(tbl map[string]*Ticket, key string, till time.T
 // realm. It will send an AS_REQ to get the initial ticket in the credential's
 // realm if no valid tgt ticket in the cache can be found.
 func (c *Credential) getTgt(realm string, ctill time.Time) (*Ticket, string, error) {
+	fmt.Printf("XXX in getTgt\n")
 	// TGS_REQ using the remote realm
 	if tgt := c.lookupCache(c.tgt, realm, ctill, 0); tgt != nil {
 		return tgt, realm, nil
@@ -251,14 +314,16 @@ func (c *Credential) getTgt(realm string, ctill time.Time) (*Ticket, string, err
 
 	// AS_REQ login
 	r := request{
-		cfg:     c.cfg,
-		ckey:    c.key,
-		ckvno:   c.kvno,
-		flags:   defaultLoginFlags,
-		crealm:  c.realm,
-		srealm:  c.realm,
-		client:  c.principal,
-		service: principalName{principalNameType, []string{"krbtgt", c.realm}},
+		cfg:         c.cfg,
+		ckey:        c.key,
+		ckvno:       c.kvno,
+		flags:       defaultLoginFlags,
+		crealm:      c.realm,
+		srealm:      c.realm,
+		client:      c.principal,
+		service:     principalName{principalNameType, []string{"krbtgt", c.realm}},
+		keyPassword: c.keyPassword,
+		keySalt:     c.keySalt,
 	}
 
 	tgt, err := r.do()
@@ -318,6 +383,7 @@ var DefaultTicketConfig = TicketConfig{
 // returned ticket may not have all the flags if the domain policy forbids
 // some of them. Valid flag values are of the form Ticket*.
 func (c *Credential) GetTicket(service string, cfg *TicketConfig) (*Ticket, error) {
+	fmt.Printf("XXX in GetTicket\n")
 	// One of a number of possiblities:
 	// 1. Init state (no keys) user is requesting service key. Send AS_REQ then send TGS_REQ.
 	// 2. Init state (no keys) user is requesting krbtgt key. Send AS_REQ, find krbtgt key in cache.
@@ -360,18 +426,21 @@ func (c *Credential) GetTicket(service string, cfg *TicketConfig) (*Ticket, erro
 		return tkt, nil
 	}
 
+	fmt.Printf("XXX Starting loop\n")
 	// Loop around the ticket granting services that get returned until we
 	// either get our service or we cancel due to a loop in the auth path
 	for i := 0; i < 10; i++ {
 		r := request{
-			cfg:     c.cfg,
-			client:  c.principal,
-			crealm:  c.realm,
-			service: splitPrincipal(service),
-			srealm:  tgtrealm,
-			tgt:     tgt,
-			flags:   cfg.Flags,
-			till:    cfg.Till,
+			cfg:         c.cfg,
+			client:      c.principal,
+			crealm:      c.realm,
+			service:     splitPrincipal(service),
+			srealm:      tgtrealm,
+			tgt:         tgt,
+			flags:       cfg.Flags,
+			till:        cfg.Till,
+			keyPassword: c.keyPassword,
+			keySalt:     c.keySalt,
 		}
 
 		tkt, err := r.do()

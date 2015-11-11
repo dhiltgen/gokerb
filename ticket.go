@@ -31,6 +31,10 @@ type request struct {
 	seqnum uint32
 	sock   io.ReadWriteCloser
 	proto  string
+
+	// Temporary hack - this should be cleaned up
+	keyPassword string
+	keySalt     string
 }
 
 var notill = asn1.RawValue{
@@ -144,6 +148,7 @@ func (r *request) sendRequest() (err error) {
 }
 
 func (r *request) recvReply() (tkt *Ticket, err error) {
+	fmt.Printf("XXX pass in recvReply: %s\n", r.keyPassword)
 	defer recoverMust(&err)
 
 	var data []byte
@@ -176,6 +181,20 @@ func (r *request) recvReply() (tkt *Ticket, err error) {
 	if (data[0] & 0x1F) == errorType {
 		errmsg := errorMessage{}
 		mustUnmarshal(data, &errmsg, errorParam)
+		fmt.Printf("Error from server\n")
+		fmt.Printf("    ProtoVersion: %d\n", errmsg.ProtoVersion)
+		fmt.Printf("    MsgType: %d\n", errmsg.MsgType)
+		fmt.Printf("    ClientTime: %v\n", errmsg.ClientTime)
+		fmt.Printf("    ClientMicroseconds: %v\n", errmsg.ClientMicroseconds)
+		fmt.Printf("    ServerTime: %v\n", errmsg.ServerTime)
+		fmt.Printf("    ServerMicroseconds: %v\n", errmsg.ServerMicroseconds)
+		fmt.Printf("    ErrorCode: %v\n", errmsg.ErrorCode)
+		fmt.Printf("    ClientRealm: %v\n", errmsg.ClientRealm)
+		fmt.Printf("    Client: %v\n", errmsg.Client)
+		fmt.Printf("    ServiceRealm: %v\n", errmsg.ServiceRealm)
+		fmt.Printf("    Service: %v\n", errmsg.Service)
+		fmt.Printf("    ErrorText: %v\n", errmsg.ErrorText)
+		fmt.Printf("    ErrorData: %v\n", errmsg.ErrorData)
 		return nil, ErrRemote{&errmsg}
 	}
 
@@ -306,11 +325,16 @@ func (r *request) recvReply() (tkt *Ticket, err error) {
 		Addresses         []address           `asn1:"optional,explicit,tag:9"`
 		AuthorizationData []authorizationData `asn1:"optional,explicit,tag:10"`
 	}
+	tkey, err := loadStringKey(kerbTicket.Encrypted.Algo, r.keyPassword, r.keySalt)
+	if err != nil {
+		fmt.Printf("Failed to load Key: %s\n", err)
+		return nil, err
+	}
 	encTicket := encryptedTicket{}
 	etdata := kerbTicket.Encrypted.Data
 	if key != nil {
 		fmt.Printf("Decrypyting\n")
-		etdata = mustDecrypt(key, nil, kerbTicket.Encrypted.Algo, ticketKey, kerbTicket.Encrypted.Data)
+		etdata = mustDecrypt(tkey, nil, kerbTicket.Encrypted.Algo, ticketKey, kerbTicket.Encrypted.Data)
 	} else {
 		fmt.Printf("XXX NO key!\n")
 	}

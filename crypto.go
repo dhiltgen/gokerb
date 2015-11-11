@@ -626,16 +626,17 @@ func (s *aeshmac) Encrypt(salt []byte, usage int, data ...[]byte) []byte {
 
 	out := make([]byte, outsz)
 
-	io.ReadFull(rand.Reader, out[:bb])
+	io.ReadFull(rand.Reader, out[hashSize:hashSize+bb])
 	v := out[bb+hashSize:]
 	for _, d := range data {
 		n := copy(v, d)
 		v = v[n:]
 	}
 
-	h.Write(out)
+	h.Write(out[hashSize:])
 	hash := h.Sum(nil)
-	copy(out[bb:], hash[:hashSize])
+	fmt.Printf("Encrypt: Computed hash: %s", hex.Dump(hash[:hashSize]))
+	copy(out[:hashSize], hash[:hashSize])
 
 	//fmt.Printf("Before encrypting\n")
 	//fmt.Println(hex.Dump(out))
@@ -731,16 +732,15 @@ func (s *aeshmac) Decrypt(salt []byte, algo, usage int, data []byte) ([]byte, er
 
 	// Verify checksum
 	chk := make([]byte, hashSize)
-	h.Write(data[:bb])
-	h.Write(chk) // Just need h.Size() zero bytes instead of the checksum
-	h.Write(data[bb+len(chk):])
+	h.Write(data[hashSize:])
 	chk = h.Sum(nil)
 	fmt.Printf("Computed hash: %s", hex.Dump(chk[:hashSize]))
 
-	if subtle.ConstantTimeCompare(chk[:hashSize], data[bb:bb+hashSize]) != 1 {
+	if subtle.ConstantTimeCompare(chk[:hashSize], data[:hashSize]) != 1 {
 		fmt.Println("XXX aeshmac checksum")
 		return nil, ErrProtocol
 	}
+	fmt.Printf("PASS!  hash looks good\n")
 
 	return data[bb+hashSize:], nil
 }
@@ -756,8 +756,9 @@ func (s *aeshmac) Key() []byte {
 // aeshmac.
 func aeshmacKey(password, salt string, iterations, usage int) []byte {
 	const bb = 16
-	//fmt.Printf("XXX Generating key from password %s and salt %s\n", password, salt)
 	// HACK
+	salt = "AD.DCKR.ORGdtradmin1"
+	fmt.Printf("XXX Generating key from password %s and salt %s\n", password, salt)
 	var keyLen int
 	// XXX RFC3962 is a little vague - 4096 looks right, but there's a
 	// string-to-key parameter - where does that come from?

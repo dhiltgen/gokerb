@@ -756,7 +756,7 @@ func (s *aeshmac) Key() []byte {
 // aeshmac.
 func aeshmacKey(password, salt string, iterations, usage int) []byte {
 	const bb = 16
-	fmt.Printf("XXX Generating key from password %s and salt %s\n", password, salt)
+	//fmt.Printf("XXX Generating key from password %s and salt %s\n", password, salt)
 	// HACK
 	var keyLen int
 	// XXX RFC3962 is a little vague - 4096 looks right, but there's a
@@ -765,7 +765,7 @@ func aeshmacKey(password, salt string, iterations, usage int) []byte {
 	// ETYPE-INFO2 -> s2k-params for AES would list iteration count
 	switch usage {
 	case cryptAes128CtsHmac:
-		keyLen = 24
+		keyLen = 16
 	case cryptAes256CtsHmac:
 		keyLen = 32
 	}
@@ -776,19 +776,15 @@ func aeshmacKey(password, salt string, iterations, usage int) []byte {
 	// key = DK(tkey, "kerberos")
 	hashFunc := sha1.New
 	tkey := pbkdf2.Key([]byte(password), []byte(salt), iterations, keyLen, hashFunc)
-	fmt.Printf("XXX pbkdf2 result: %s", hex.Dump(tkey))
+	//fmt.Printf("XXX pbkdf2 result: %s", hex.Dump(tkey))
 	constant := NFold([]byte("kerberos"), 128)
-	fmt.Printf("XXX const: %s", hex.Dump(constant))
+	//fmt.Printf("XXX const: %s", hex.Dump(constant))
 	b, _ := aes.NewCipher(tkey)
-	//iv := [bb]byte{}
-	//c := cipher.NewCBCDecrypter(b, iv[:])
 	out := make([]byte, 32)
 	copy(out, constant)
 	b.Encrypt(out, out)
 	b.Encrypt(out[bb:], out[:bb])
-	//c.CryptBlocks(out, out)
-	//c.CryptBlocks(out[bb:], out[:bb])
-	fmt.Printf("XXX output key: %s", hex.Dump(out))
+	//fmt.Printf("XXX output key: %s", hex.Dump(out))
 	return out[:keyLen]
 }
 

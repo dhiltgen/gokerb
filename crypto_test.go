@@ -3,7 +3,7 @@ package kerb
 import (
 	"bytes"
 	"encoding/hex"
-	"fmt"
+	//"fmt"
 	"testing"
 )
 
@@ -27,7 +27,7 @@ var desStringTests = []struct {
 }
 
 func TestDesStringKey(t *testing.T) {
-	fmt.Printf("XXX d\n")
+	//fmt.Printf("XXX d\n")
 	for i, d := range desStringTests {
 		key := desStringKey(d.pass, d.salt)
 		if !bytes.Equal(key, mustHexDecode(d.key)) {
@@ -43,7 +43,7 @@ var gssDesTests = []struct {
 }
 
 func TestGssDes(t *testing.T) {
-	fmt.Printf("XXX c\n")
+	//fmt.Printf("XXX c\n")
 	for i, d := range gssDesTests {
 		k := mustLoadKey(cryptDesCbcMd5, mustHexDecode(d.key))
 		chk, err := k.Sign(signGssDes, 0, []byte(d.data))
@@ -86,7 +86,7 @@ var cryptTests = []struct {
 }
 
 func TestCrypt(t *testing.T) {
-	fmt.Printf("XXX b\n")
+	//fmt.Printf("XXX b\n")
 	for i, d := range cryptTests {
 		key := mustLoadKey(d.algo, mustHexDecode(d.key))
 		enc := key.Encrypt(nil, paEncryptedTimestampKey, mustHexDecode(d.data))
@@ -102,7 +102,7 @@ func TestCrypt(t *testing.T) {
 }
 
 func TestCryptWithPasswordString(t *testing.T) {
-	fmt.Printf("XXX a\n")
+	//fmt.Printf("XXX a\n")
 	for i, d := range cryptTests {
 
 		key, err := loadStringKey(d.algo, d.key, "mysalt")
@@ -140,7 +140,7 @@ var foldTests = []struct {
 }
 
 func TestNFold(t *testing.T) {
-	fmt.Printf("XXX Testing fold\n")
+	//fmt.Printf("XXX Testing fold\n")
 	for i, d := range foldTests {
 
 		res := NFold([]byte(d.input), d.bits)
@@ -164,16 +164,16 @@ var aesKeyTests = []struct {
 	salt       string
 	key        string
 }{
-	//{1, cryptAes128CtsHmac, "password", "ATHENA.MIT.EDUraeburn", "42263c6e89f4fc28b8df68ee09799f15"},
+	{1, cryptAes128CtsHmac, "password", "ATHENA.MIT.EDUraeburn", "42263c6e89f4fc28b8df68ee09799f15"},
 	{1, cryptAes256CtsHmac, "password", "ATHENA.MIT.EDUraeburn", "fe697b52bc0d3ce14432ba036a92e65bbb52280990a2fa27883998d72af30161"},
-	//{2, cryptAes128CtsHmac, "password", "ATHENA.MIT.EDUraeburn", "c651bf29e2300ac27fa469d693bdda13"},
-	//{2, cryptAes256CtsHmac, "password", "ATHENA.MIT.EDUraeburn", "a2e16d16b36069c135d5e9d2e25f896102685618b95914b467c67622225824ff"},
-	//{1200, cryptAes128CtsHmac, "password", "ATHENA.MIT.EDUraeburn", "4c01cd46d632d01e6dbe230a01ed642a"},
-	//{1200, cryptAes256CtsHmac, "password", "ATHENA.MIT.EDUraeburn", "55a6ac740ad17b4846941051e1e8b0a7548d93b0ab30a8bc3ff16280382b8c2a"},
+	{2, cryptAes128CtsHmac, "password", "ATHENA.MIT.EDUraeburn", "c651bf29e2300ac27fa469d693bdda13"},
+	{2, cryptAes256CtsHmac, "password", "ATHENA.MIT.EDUraeburn", "a2e16d16b36069c135d5e9d2e25f896102685618b95914b467c67622225824ff"},
+	{1200, cryptAes128CtsHmac, "password", "ATHENA.MIT.EDUraeburn", "4c01cd46d632d01e6dbe230a01ed642a"},
+	{1200, cryptAes256CtsHmac, "password", "ATHENA.MIT.EDUraeburn", "55a6ac740ad17b4846941051e1e8b0a7548d93b0ab30a8bc3ff16280382b8c2a"},
 }
 
 func TestAesKeyGeneration(t *testing.T) {
-	fmt.Printf("XXX Testing AES key generation\n")
+	//fmt.Printf("XXX Testing AES key generation\n")
 	for i, d := range aesKeyTests {
 
 		res := aeshmacKey(d.password, d.salt, d.iterations, d.usage)

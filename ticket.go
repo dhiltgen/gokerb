@@ -331,27 +331,30 @@ func (r *request) recvReply() (tkt *Ticket, err error) {
 		fmt.Printf("Failed to load Key: %s\n", err)
 		return nil, err
 	}
-	encTicket := encryptedTicket{}
-	etdata := kerbTicket.Encrypted.Data
 	if key != nil {
-		fmt.Printf("Decrypyting\n")
-		etdata = mustDecrypt(tkey, nil, kerbTicket.Encrypted.Algo, ticketKey, kerbTicket.Encrypted.Data)
+		fmt.Printf("Attemping to decrypyting\n")
+		etdata, err := tkey.Decrypt(nil, kerbTicket.Encrypted.Algo, ticketKey, kerbTicket.Encrypted.Data)
+		if err != nil {
+			fmt.Printf("Failed to decrypt: %s\n", err)
+		} else {
+			fmt.Printf("unmarshaling\n")
+			encTicket := encryptedTicket{}
+			mustUnmarshal(etdata, &encTicket, "application,explicit,tag:3")
+			fmt.Printf("Encrypted.Flags = %v\n", encTicket.Flags)
+			fmt.Printf("Encrypted.Key = %v\n", encTicket.Key)
+			fmt.Printf("Encrypted.ClientRealm = %v\n", encTicket.ClientRealm)
+			fmt.Printf("Encrypted.ClientName = %v\n", encTicket.ClientName)
+			fmt.Printf("Encrypted.Transited = %v\n", encTicket.Transited)
+			fmt.Printf("Encrypted.AuthTime = %v\n", encTicket.AuthTime)
+			fmt.Printf("Encrypted.From = %v\n", encTicket.From)
+			fmt.Printf("Encrypted.Till = %v\n", encTicket.Till)
+			fmt.Printf("Encrypted.RenewTill = %v\n", encTicket.RenewTill)
+			fmt.Printf("Encrypted.Addresses = %v\n", encTicket.Addresses)
+			fmt.Printf("Encrypted.AuthorizationData = %v\n", encTicket.AuthorizationData)
+		}
 	} else {
 		fmt.Printf("XXX NO key!\n")
 	}
-	fmt.Printf("unmarshaling\n")
-	mustUnmarshal(etdata, &encTicket, "application,explicit,tag:3")
-	fmt.Printf("Encrypted.Flags = %v\n", encTicket.Flags)
-	fmt.Printf("Encrypted.Key = %v\n", encTicket.Key)
-	fmt.Printf("Encrypted.ClientRealm = %v\n", encTicket.ClientRealm)
-	fmt.Printf("Encrypted.ClientName = %v\n", encTicket.ClientName)
-	fmt.Printf("Encrypted.Transited = %v\n", encTicket.Transited)
-	fmt.Printf("Encrypted.AuthTime = %v\n", encTicket.AuthTime)
-	fmt.Printf("Encrypted.From = %v\n", encTicket.From)
-	fmt.Printf("Encrypted.Till = %v\n", encTicket.Till)
-	fmt.Printf("Encrypted.RenewTill = %v\n", encTicket.RenewTill)
-	fmt.Printf("Encrypted.Addresses = %v\n", encTicket.Addresses)
-	fmt.Printf("Encrypted.AuthorizationData = %v\n", encTicket.AuthorizationData)
 
 	// The returned service may be different from the request. This
 	// happens when we get a tgt of the next server to try.

@@ -134,9 +134,12 @@ const (
 	_
 	paPkAsRepOld
 	paPkAsReqType
-	_
+	paPkAsRep
 	_
 	paETypeInfo2
+	paPacReq            = 128 + iota
+	paSupportedEnctypes = 165 + iota
+	paPacOptions        = 167 + iota
 )
 
 // Encryption algorithms

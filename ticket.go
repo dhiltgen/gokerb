@@ -1,6 +1,7 @@
 package kerb
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 )
 
 type request struct {
@@ -485,29 +487,6 @@ func (t *Ticket) DumpPAC(servicePassword string) {
 	fmt.Printf("Ticket.Encrypted.KeyVersion = %v\n", kerbTicket.Encrypted.KeyVersion)
 	fmt.Printf("Ticket.Encrypted.Data = \n%s\n", hex.Dump(kerbTicket.Encrypted.Data))
 
-	// Decrypt the ticket stuff
-	type transitedEncoding struct {
-		Type     int32  `asn1:"explicit,tag:0"`
-		Contents []byte `asn1:"explicit,tag:1"`
-	}
-	type authorizationData struct {
-		Type int32  `asn1:"explicit,tag:0"`
-		Data []byte `asn1:"explicit,tag:1"`
-	}
-	type encryptedTicket struct {
-		Flags             asn1.BitString      `asn1:"explicit,tag:0"`
-		Key               encryptionKey       `asn1:"explicit,tag:1"`
-		ClientRealm       string              `asn1:"explicit,tag:2"`
-		ClientName        principalName       `asn1:"explicit,tag:3"`
-		Transited         transitedEncoding   `asn1:"explicit,tag:4"`
-		AuthTime          time.Time           `asn1:"generalized,explicit,tag:5"`
-		From              time.Time           `asn1:"generalized,optional,explicit,tag:6"`
-		Till              time.Time           `asn1:"generalized,explicit,tag:7"`
-		RenewTill         time.Time           `asn1:"generalized,optional,explicit,tag:8"`
-		Addresses         []address           `asn1:"optional,explicit,tag:9"`
-		AuthorizationData []authorizationData `asn1:"optional,explicit,tag:10"`
-	}
-
 	// The TGS ticket is encrypted with the machine password and salted with
 	// the service principal.
 	fmt.Printf("Attempting ticket decryption with algorithm %d\n", kerbTicket.Encrypted.Algo)
@@ -535,7 +514,7 @@ func (t *Ticket) DumpPAC(servicePassword string) {
 	fmt.Printf("Encrypted.Flags = %v\n", encTicket.Flags)
 	fmt.Printf("Encrypted.Key = %v\n", encTicket.Key)
 	fmt.Printf("Encrypted.ClientRealm = %v\n", encTicket.ClientRealm)
-	fmt.Printf("Encrypted.ClientName = %v\n", encTicket.ClientName)
+	fmt.Printf("Encrypted.Client = %v\n", encTicket.Client)
 	fmt.Printf("Encrypted.Transited = %v\n", encTicket.Transited)
 	fmt.Printf("Encrypted.AuthTime = %v\n", encTicket.AuthTime)
 	fmt.Printf("Encrypted.From = %v\n", encTicket.From)
@@ -543,15 +522,17 @@ func (t *Ticket) DumpPAC(servicePassword string) {
 	fmt.Printf("Encrypted.RenewTill = %v\n", encTicket.RenewTill)
 	fmt.Printf("Encrypted.Addresses = %v\n", encTicket.Addresses)
 	//fmt.Printf("Encrypted.AuthorizationData = %v\n", encTicket.AuthorizationData)
-	for i, entry := range encTicket.AuthorizationData {
+	for i, entry := range encTicket.Restrictions {
 		fmt.Printf("Encrypted.AuthorizationData[%d] Type: %d\n%s\n", i, entry.Type, hex.Dump(entry.Data))
 		if entry.Type == 1 {
 			fmt.Printf("AD-IF-RELEVANT\n")
-			ifRelevant := []authorizationData{}
+			ifRelevant := []restriction{}
 			mustUnmarshal(entry.Data, &ifRelevant, "")
 			for _, authData := range ifRelevant {
+				fmt.Printf("\tType: %d\n%s\n", authData.Type, hex.Dump(authData.Data))
 				if authData.Type == 128 { // WIN2K-PAC
-					fmt.Printf("\tType: %d\n%s\n", authData.Type, hex.Dump(authData.Data))
+					DecodePAC(authData)
+
 				} // else ignore
 			}
 		}
@@ -559,7 +540,243 @@ func (t *Ticket) DumpPAC(servicePassword string) {
 	}
 }
 
+// TODO - REFACTOR THIS!!! - it's darn ugly
+func DecodePAC(authData restriction) error {
+	if authData.Type != 128 { // WIN2K-PAC
+		return fmt.Errorf("Not WIN2K-PAC auth data: %d", authData.Type)
+	}
+	pac := PAC{}
+	buf := bytes.NewReader(authData.Data)
+	err := binary.Read(buf, binary.LittleEndian, &pac.Count)
+	if err != nil {
+		return err
+	}
+	err = binary.Read(buf, binary.LittleEndian, &pac.Version)
+	if err != nil {
+		return err
+	}
+	// Now iterate through the buffers based on the count
+	fmt.Printf("Detected %d PAC INFO buffers\n", pac.Count)
+	for i := uint32(0); i < pac.Count; i++ {
+		pib := PACInfoBuffer{}
+		err = binary.Read(buf, binary.LittleEndian, &pib.Type)
+		if err != nil {
+			return err
+		}
+		err = binary.Read(buf, binary.LittleEndian, &pib.BufferSize)
+		if err != nil {
+			return err
+		}
+		err = binary.Read(buf, binary.LittleEndian, &pib.Offset)
+		if err != nil {
+			return err
+		}
+		pac.Buffers = append(pac.Buffers, pib)
+		fmt.Printf("PAC[%d] type:%d size:%d offset:%d\n", i, pib.Type, pib.BufferSize, pib.Offset)
+		switch pib.Type {
+		case 1: // Logon information
+			// Shift 4 bytes to compensate for the authData header
+			DecodeLogonInfo(authData.Data[int(pib.Offset)-4 : int(pib.Offset)+int(pib.BufferSize)-4])
+		}
+		// TODO - other cases
+	}
+	// TODO continue dumping details
+	return nil
+}
+
+// Pass in the byte slice already at right offset/length
+func DecodeLogonInfo(data []byte) (*KerbValidationInfo, error) {
+	fmt.Printf("Got buffer length: %d\n", len(data))
+	li := KerbValidationInfo{}
+	buf := bytes.NewReader(data)
+	err := binary.Read(buf, binary.LittleEndian, &li.LogonTime)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("LogonTime: %x\n", li.LogonTime)
+	err = binary.Read(buf, binary.LittleEndian, &li.LogoffTime)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("LogoffTime: %x\n", li.LogoffTime)
+	err = binary.Read(buf, binary.LittleEndian, &li.KickOffTime)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("KickOffTime: %x\n", li.KickOffTime)
+	err = binary.Read(buf, binary.LittleEndian, &li.PasswordLastSet)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("PasswordLastSet: %x\n", li.PasswordLastSet)
+	err = binary.Read(buf, binary.LittleEndian, &li.PasswordCanChange)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("PasswordCanChange: %x\n", li.PasswordCanChange)
+	err = binary.Read(buf, binary.LittleEndian, &li.PasswordMustChange)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("PasswordMustChange: %x\n", li.PasswordMustChange)
+	// read in an RPC_UNICODE_STRING
+	decodeString := func() (string, error) {
+		var length uint16
+		var maxLength uint16
+		err := binary.Read(buf, binary.LittleEndian, &length)
+		if err != nil {
+			return "", err
+		}
+		err = binary.Read(buf, binary.LittleEndian, &maxLength)
+		if err != nil {
+			return "", err
+		}
+		fmt.Printf("XXX string: %x %x\n", length, maxLength)
+		if length == 0 {
+			return "", nil
+		}
+		wcharString := make([]uint16, length/2, length/2)
+		err = binary.Read(buf, binary.LittleEndian, &wcharString)
+		if err != nil {
+			return "", err
+		}
+		return string(utf16.Decode(wcharString)), nil
+
+	}
+	li.EffectiveName, err = decodeString()
+	if err != nil {
+		return nil, err
+	}
+	li.FullName, err = decodeString()
+	if err != nil {
+		return nil, err
+	}
+	li.EffectiveName, err = decodeString()
+	if err != nil {
+		return nil, err
+	}
+	li.FullName, err = decodeString()
+	if err != nil {
+		return nil, err
+	}
+	li.LogonScript, err = decodeString()
+	if err != nil {
+		return nil, err
+	}
+	li.ProfilePath, err = decodeString()
+	if err != nil {
+		return nil, err
+	}
+	li.HomeDirectory, err = decodeString()
+	if err != nil {
+		return nil, err
+	}
+	li.HomeDirectoryDrive, err = decodeString()
+	if err != nil {
+		return nil, err
+	}
+
+	err = binary.Read(buf, binary.LittleEndian, &li.LogonCount)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Read(buf, binary.LittleEndian, &li.BadPasswordCount)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Read(buf, binary.LittleEndian, &li.UserId)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Read(buf, binary.LittleEndian, &li.PrimaryGroupId)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Read(buf, binary.LittleEndian, &li.GroupCount)
+	if err != nil {
+		return nil, err
+	}
+	groups := make([]uint32, li.GroupCount, li.GroupCount)
+	err = binary.Read(buf, binary.LittleEndian, &groups)
+	if err != nil {
+		return nil, err
+	}
+	li.GroupIds = groups[:]
+	err = binary.Read(buf, binary.LittleEndian, &li.UserFlags)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Read(buf, binary.LittleEndian, &li.UserSessionKey)
+	if err != nil {
+		return nil, err
+	}
+	li.LogonServer, err = decodeString()
+	if err != nil {
+		return nil, err
+	}
+	li.LogonDomainName, err = decodeString()
+	if err != nil {
+		return nil, err
+	}
+
+	return &li, nil
+}
+
+type KerbValidationInfo struct {
+	LogonTime          uint64
+	LogoffTime         uint64
+	KickOffTime        uint64
+	PasswordLastSet    uint64
+	PasswordCanChange  uint64
+	PasswordMustChange uint64
+	EffectiveName      string
+	FullName           string
+	LogonScript        string
+	ProfilePath        string
+	HomeDirectory      string
+	HomeDirectoryDrive string
+	LogonCount         uint16
+	BadPasswordCount   uint16
+	UserId             uint32
+	PrimaryGroupId     uint32
+	GroupCount         uint32
+	GroupIds           []uint32 //[size_is(GroupCount)]
+
+	UserFlags       uint32
+	UserSessionKey  [16]byte
+	LogonServer     string
+	LogonDomainName string
+	/*
+	   TODO - map remaining fields
+	    PISID LogonDomainId // This one is kinda ugly, and we don't care, so I stopped here...
+	    Reserved1 [2]uint32
+	    UserAccountControl uint32
+	    Reserved3 [7]uint32
+	    SidCount uint32
+
+	    [size_is(SidCount)]
+	    PKERB_SID_AND_ATTRIBUTES ExtraSids;
+
+	    PISID ResourceGroupDomainSid
+	    ResourceGroupCount uint32
+
+	    [size_is(ResourceGroupCount)]
+	    PGROUP_MEMBERSHIP ResourceGroupIds
+	*/
+}
+
 // TODO - move elsewhere
+type PACInfoBuffer struct {
+	Type       uint32 `asn1:"tag:0"`
+	BufferSize uint32 `asn1:"tag:1"`
+	Offset     uint64 `asn1:"tag:2"`
+}
+
+type PAC struct {
+	Count   uint32
+	Version uint32
+	Buffers []PACInfoBuffer
+}
 
 // GenerateTicket generates a local ticket that a client can use to
 // authenticate against this credential.

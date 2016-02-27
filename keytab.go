@@ -145,7 +145,11 @@ func ReadKeytab(file io.Reader, cfg *CredConfig) (creds []*Credential, err error
 
 		skip(file, &n, size)
 
-		key := mustLoadKey(keytype, keydata)
+		key, err := loadKey(keytype, keydata)
+		if err != nil {
+			fmt.Printf("XXX Failed to load key algo %d (skipping)", keytype)
+			continue
+		}
 		pr := principalName{nametype, parts[1:]}
 		c := newCredential(pr, parts[0], key, kvno, cfg)
 		creds = append(creds, c)

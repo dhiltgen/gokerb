@@ -37,6 +37,13 @@ type request struct {
 	keySalt     string
 }
 
+type KerbTicket struct {
+	Version       int           `asn1:"explicit,tag:0"`
+	Realm         string        `asn1:"explicit,tag:1"`
+	PrincipalName principalName `asn1:"optional,explicit,tag:2"`
+	Encrypted     encryptedData `asn1:"explicit,tag:3"`
+}
+
 var notill = asn1.RawValue{
 	Bytes: []byte("19700101000000Z"),
 	Class: 0,
@@ -106,6 +113,7 @@ func (r *request) sendRequest() (err error) {
 				Data: r.tgt.key.Encrypt(nil, paTgsRequestKey, authdata),
 			},
 		}
+		fmt.Printf("XXX Sending ticket:\n%s", hex.Dump(r.tgt.ticket))
 
 		appdata := mustMarshal(app, appRequestParam)
 		req.Preauth = []preauth{{paTgsRequest, appdata}}
@@ -202,15 +210,18 @@ func (r *request) recvReply() (tkt *Ticket, err error) {
 	var repparam, encparam string
 	var key key
 
+	// XXX DEBUG
+	prefix := ""
+
 	if r.tgt != nil {
-		fmt.Printf("tgsReplyType\n")
+		prefix = "TGS Reply"
 		repparam = tgsReplyParam
 		msgtype = tgsReplyType
 		key = r.tgt.key
 		usage = tgsReplySessionKey
 		encparam = encTgsReplyParam
 	} else {
-		fmt.Printf("asReplyType\n")
+		prefix = "AS Reply"
 		repparam = asReplyParam
 		msgtype = asReplyType
 		key = r.ckey
@@ -221,7 +232,7 @@ func (r *request) recvReply() (tkt *Ticket, err error) {
 	// Decode reply body
 	rep := kdcReply{}
 	mustUnmarshal(data, &rep, repparam)
-	fmt.Println("XXX 4")
+	fmt.Println(prefix)
 	must(rep.ProtoVersion == kerberosVersion && rep.MsgType == msgtype)
 	must(rep.ClientRealm == r.crealm && nameEquals(rep.Client, r.client))
 
@@ -239,18 +250,19 @@ func (r *request) recvReply() (tkt *Ticket, err error) {
 		}
 	}
 	/* XXX Show what we got so far */
-	fmt.Printf("rep.ProtoVersion = %d\n", rep.ProtoVersion)
-	fmt.Printf("rep.MsgType = %d\n", rep.MsgType)
-	fmt.Printf("rep.Preauth = %v\n", rep.Preauth)
-	fmt.Printf("rep.ClientRealm = %v\n", rep.ClientRealm)
-	fmt.Printf("rep.Client = %v\n", rep.Client)
-	fmt.Printf("rep.Ticket.Class = %v\n", rep.Ticket.Class)
-	fmt.Printf("rep.Ticket.Tag = %v\n", rep.Ticket.Tag)
-	fmt.Printf("rep.Ticket.IsCompound = %v\n", rep.Ticket.IsCompound)
-	//fmt.Printf("rep.Ticket.Bytes = %v\n", rep.Ticket.Bytes)
-	fmt.Printf("rep.Encrypted.Algo = %v\n", rep.Encrypted.Algo)
-	fmt.Printf("rep.Encrypted.KeyVersion = %v\n", rep.Encrypted.KeyVersion)
-	fmt.Printf("rep.Encrypted.Data = \n%s\n", hex.Dump(rep.Encrypted.Data))
+	fmt.Printf("%s: ProtoVersion = %d\n", prefix, rep.ProtoVersion)
+	fmt.Printf("%s: MsgType = %d\n", prefix, rep.MsgType)
+	fmt.Printf("%s: Preauth = %v\n", prefix, rep.Preauth)
+	fmt.Printf("%s: ClientRealm = %v\n", prefix, rep.ClientRealm)
+	fmt.Printf("%s: Client = %v\n", prefix, rep.Client)
+
+	fmt.Printf("%s: Ticket.Class = %v\n", prefix, rep.Ticket.Class)
+	fmt.Printf("%s: Ticket.Tag = %v\n", prefix, rep.Ticket.Tag)
+	fmt.Printf("%s: Ticket.IsCompound = %v\n", prefix, rep.Ticket.IsCompound)
+	//fmt.Printf("%s: Ticket.Bytes = \n%v\n", prefix, hex.Dump(rep.Ticket.Bytes)) // Dumped out in DumpPAC
+	fmt.Printf("%s: Encrypted.Algo = %v\n", prefix, rep.Encrypted.Algo)
+	fmt.Printf("%s: Encrypted.KeyVersion = %v\n", prefix, rep.Encrypted.KeyVersion)
+	fmt.Printf("%s: Encrypted.Data = \n%s\n", prefix, hex.Dump(rep.Encrypted.Data))
 
 	// Decode encrypted part
 	enc := encryptedKdcReply{}
@@ -259,19 +271,19 @@ func (r *request) recvReply() (tkt *Ticket, err error) {
 		edata = mustDecrypt(key, nil, rep.Encrypted.Algo, usage, rep.Encrypted.Data)
 	}
 	mustUnmarshal(edata, &enc, encparam)
-	fmt.Printf("rep. decrypted.Key.Algo = %v\n", enc.Key.Algo)
-	fmt.Printf("rep. decrypted.Key.Key = \n%s\n", hex.Dump(enc.Key.Key))
-	fmt.Printf("rep. decrypted.LastRequests = %v\n", enc.LastRequests)
-	fmt.Printf("rep. decrypted.Nonce = %v\n", enc.Nonce)
-	fmt.Printf("rep. decrypted.ClientKeyExpiry = %v\n", enc.ClientKeyExpiry)
-	fmt.Printf("rep. decrypted.Flags = %v\n", enc.Flags)
-	fmt.Printf("rep. decrypted.AuthTime = %v\n", enc.AuthTime)
-	fmt.Printf("rep. decrypted.From = %v\n", enc.From)
-	fmt.Printf("rep. decrypted.Till = %v\n", enc.Till)
-	fmt.Printf("rep. decrypted.RenewTill = %v\n", enc.RenewTill)
-	fmt.Printf("rep. decrypted.ServiceRealm = %v\n", enc.ServiceRealm)
-	fmt.Printf("rep. decrypted.Service = %v\n", enc.Service)
-	fmt.Printf("rep. decrypted.Addresses = %v\n", enc.Addresses)
+	fmt.Printf("%s: decrypted.Key.Algo = %v\n", prefix, enc.Key.Algo)
+	fmt.Printf("%s: decrypted.Key.Key = \n%s\n", prefix, hex.Dump(enc.Key.Key))
+	fmt.Printf("%s: decrypted.LastRequests = %v\n", prefix, enc.LastRequests)
+	fmt.Printf("%s: decrypted.Nonce = %v\n", prefix, enc.Nonce)
+	fmt.Printf("%s: decrypted.ClientKeyExpiry = %v\n", prefix, enc.ClientKeyExpiry)
+	fmt.Printf("%s: decrypted.Flags = %v\n", prefix, enc.Flags)
+	fmt.Printf("%s: decrypted.AuthTime = %v\n", prefix, enc.AuthTime)
+	fmt.Printf("%s: decrypted.From = %v\n", prefix, enc.From)
+	fmt.Printf("%s: decrypted.Till = %v\n", prefix, enc.Till)
+	fmt.Printf("%s: decrypted.RenewTill = %v\n", prefix, enc.RenewTill)
+	fmt.Printf("%s: decrypted.ServiceRealm = %v\n", prefix, enc.ServiceRealm)
+	fmt.Printf("%s: decrypted.Service = %v\n", prefix, enc.Service)
+	fmt.Printf("%s: decrypted.Addresses = %v\n", prefix, enc.Addresses)
 	/*
 		Key             encryptionKey  `asn1:"explicit,tag:0"`
 		LastRequests    []lastRequest  `asn1:"explicit,tag:1"`
@@ -287,82 +299,12 @@ func (r *request) recvReply() (tkt *Ticket, err error) {
 		Addresses       []address      `asn1:"optional,explicit,tag:11"`
 	*/
 
-	// Try to interpret the ticket
-	type KerbTicket struct {
-		Version       int           `asn1:"explicit,tag:0"`
-		Realm         string        `asn1:"explicit,tag:1"`
-		PrincipalName principalName `asn1:"optional,explicit,tag:2"`
-		Encrypted     encryptedData `asn1:"explicit,tag:3"`
-	}
-	kerbTicket := KerbTicket{}
-	mustUnmarshal(rep.Ticket.FullBytes, &kerbTicket, "application,explicit,tag:1")
-	fmt.Printf("Ticket.Version = %v\n", kerbTicket.Version)
-	fmt.Printf("Ticket.Realm = %v\n", kerbTicket.Realm)
-	fmt.Printf("Ticket.PrincipalName = %v\n", kerbTicket.PrincipalName)
-	fmt.Printf("Ticket.Encrypted.Algo = %v\n", kerbTicket.Encrypted.Algo)
-	fmt.Printf("Ticket.Encrypted.KeyVersion = %v\n", kerbTicket.Encrypted.KeyVersion)
-	fmt.Printf("Ticket.Encrypted.Data = \n%s\n", hex.Dump(kerbTicket.Encrypted.Data))
-
-	// Decrypt the ticket stuff
-	type transitedEncoding struct {
-		Type     int32  `asn1:"explicit,tag:0"`
-		Contents []byte `asn1:"explicit,tag:1"`
-	}
-	type authorizationData struct {
-		Type int32  `asn1:"explicit,tag:0"`
-		Data []byte `asn1:"explicit,tag:1"`
-	}
-	type encryptedTicket struct {
-		Flags             asn1.BitString      `asn1:"explicit,tag:0"`
-		Key               encryptionKey       `asn1:"explicit,tag:1"`
-		ClientRealm       string              `asn1:"explicit,tag:2"`
-		ClientName        principalName       `asn1:"explicit,tag:3"`
-		Transited         transitedEncoding   `asn1:"explicit,tag:4"`
-		AuthTime          time.Time           `asn1:"generalized,explicit,tag:5"`
-		From              time.Time           `asn1:"generalized,optional,explicit,tag:6"`
-		Till              time.Time           `asn1:"generalized,explicit,tag:7"`
-		RenewTill         time.Time           `asn1:"generalized,optional,explicit,tag:8"`
-		Addresses         []address           `asn1:"optional,explicit,tag:9"`
-		AuthorizationData []authorizationData `asn1:"optional,explicit,tag:10"`
-	}
-	//tkey, err := loadStringKey(kerbTicket.Encrypted.Algo, r.keyPassword, r.keySalt)
-	tkey, err := loadStringKey(kerbTicket.Encrypted.Algo, r.keyPassword, "AD.DCKR.ORGdtradmin1")
-	if err != nil {
-		fmt.Printf("Failed to load Key: %s\n", err)
-		return nil, err
-	}
-	if key != nil {
-		fmt.Printf("Attemping to decrypyting\n")
-		etdata, err := tkey.Decrypt(nil, kerbTicket.Encrypted.Algo, ticketKey, kerbTicket.Encrypted.Data)
-		if err != nil {
-			fmt.Printf("Failed to decrypt: %s\n", err)
-		} else {
-			fmt.Printf("unmarshaling\n")
-			encTicket := encryptedTicket{}
-			mustUnmarshal(etdata, &encTicket, "application,explicit,tag:3")
-			fmt.Printf("Encrypted.Flags = %v\n", encTicket.Flags)
-			fmt.Printf("Encrypted.Key = %v\n", encTicket.Key)
-			fmt.Printf("Encrypted.ClientRealm = %v\n", encTicket.ClientRealm)
-			fmt.Printf("Encrypted.ClientName = %v\n", encTicket.ClientName)
-			fmt.Printf("Encrypted.Transited = %v\n", encTicket.Transited)
-			fmt.Printf("Encrypted.AuthTime = %v\n", encTicket.AuthTime)
-			fmt.Printf("Encrypted.From = %v\n", encTicket.From)
-			fmt.Printf("Encrypted.Till = %v\n", encTicket.Till)
-			fmt.Printf("Encrypted.RenewTill = %v\n", encTicket.RenewTill)
-			fmt.Printf("Encrypted.Addresses = %v\n", encTicket.Addresses)
-			fmt.Printf("Encrypted.AuthorizationData = %v\n", encTicket.AuthorizationData)
-		}
-	} else {
-		fmt.Printf("XXX NO key!\n")
-	}
-
 	// The returned service may be different from the request. This
 	// happens when we get a tgt of the next server to try.
-	fmt.Println("XXX 1")
 	must(enc.Nonce == r.nonce && enc.ServiceRealm == r.srealm)
 	key = mustLoadKey(enc.Key.Algo, enc.Key.Key)
 
-	return &Ticket{
+	t := &Ticket{
 		cfg:       r.cfg,
 		client:    r.client,
 		crealm:    r.crealm,
@@ -375,7 +317,9 @@ func (r *request) recvReply() (tkt *Ticket, err error) {
 		startTime: enc.From,
 		flags:     bitStringToFlags(enc.Flags),
 		key:       key,
-	}, nil
+	}
+	//t.DumpPAC(nil)
+	return t, nil
 }
 
 type Ticket struct {
@@ -527,6 +471,95 @@ func (t *Ticket) ExpiryTime() time.Time {
 func (t *Ticket) RawTicket() []byte {
 	return t.ticket
 }
+
+// XXX replace with a routine to extract the real data and return some structure
+func (t *Ticket) DumpPAC(servicePassword string) {
+	fmt.Printf("Dumping ticket information including PAC\n")
+	// Try to interpret the ticket
+	kerbTicket := KerbTicket{}
+	mustUnmarshal(t.ticket, &kerbTicket, "application,explicit,tag:1")
+	fmt.Printf("Ticket.Version = %v\n", kerbTicket.Version)
+	fmt.Printf("Ticket.Realm = %v\n", kerbTicket.Realm)
+	fmt.Printf("Ticket.PrincipalName = %v\n", kerbTicket.PrincipalName)
+	fmt.Printf("Ticket.Encrypted.Algo = %v\n", kerbTicket.Encrypted.Algo)
+	fmt.Printf("Ticket.Encrypted.KeyVersion = %v\n", kerbTicket.Encrypted.KeyVersion)
+	fmt.Printf("Ticket.Encrypted.Data = \n%s\n", hex.Dump(kerbTicket.Encrypted.Data))
+
+	// Decrypt the ticket stuff
+	type transitedEncoding struct {
+		Type     int32  `asn1:"explicit,tag:0"`
+		Contents []byte `asn1:"explicit,tag:1"`
+	}
+	type authorizationData struct {
+		Type int32  `asn1:"explicit,tag:0"`
+		Data []byte `asn1:"explicit,tag:1"`
+	}
+	type encryptedTicket struct {
+		Flags             asn1.BitString      `asn1:"explicit,tag:0"`
+		Key               encryptionKey       `asn1:"explicit,tag:1"`
+		ClientRealm       string              `asn1:"explicit,tag:2"`
+		ClientName        principalName       `asn1:"explicit,tag:3"`
+		Transited         transitedEncoding   `asn1:"explicit,tag:4"`
+		AuthTime          time.Time           `asn1:"generalized,explicit,tag:5"`
+		From              time.Time           `asn1:"generalized,optional,explicit,tag:6"`
+		Till              time.Time           `asn1:"generalized,explicit,tag:7"`
+		RenewTill         time.Time           `asn1:"generalized,optional,explicit,tag:8"`
+		Addresses         []address           `asn1:"optional,explicit,tag:9"`
+		AuthorizationData []authorizationData `asn1:"optional,explicit,tag:10"`
+	}
+
+	// The TGS ticket is encrypted with the machine password and salted with
+	// the service principal.
+	fmt.Printf("Attempting ticket decryption with algorithm %d\n", kerbTicket.Encrypted.Algo)
+	//fmt.Printf("Attempting with machine secret %s\n", servicePassword)
+	salt := ""
+	if kerbTicket.Encrypted.Algo != cryptRc4Hmac {
+		// TODO - this might be dumb... look at other algorithms that may or may not need salt
+		salt = composePrincipal(kerbTicket.PrincipalName)
+	}
+
+	tkey, err := loadStringKey(kerbTicket.Encrypted.Algo, servicePassword, salt)
+	if err != nil {
+		fmt.Printf("Failed to generate Key using machine password and spn salt: %s\n", err)
+		return
+	}
+	etdata, err := tkey.Decrypt(nil, kerbTicket.Encrypted.Algo, ticketKey, kerbTicket.Encrypted.Data)
+	if err != nil {
+		fmt.Printf("Failed to decrypt: %s\n", err)
+		return
+	}
+	fmt.Printf("SUCCESS!!!\n")
+	fmt.Printf("unmarshaling Ticket\n")
+	encTicket := encryptedTicket{}
+	mustUnmarshal(etdata, &encTicket, "application,explicit,tag:3")
+	fmt.Printf("Encrypted.Flags = %v\n", encTicket.Flags)
+	fmt.Printf("Encrypted.Key = %v\n", encTicket.Key)
+	fmt.Printf("Encrypted.ClientRealm = %v\n", encTicket.ClientRealm)
+	fmt.Printf("Encrypted.ClientName = %v\n", encTicket.ClientName)
+	fmt.Printf("Encrypted.Transited = %v\n", encTicket.Transited)
+	fmt.Printf("Encrypted.AuthTime = %v\n", encTicket.AuthTime)
+	fmt.Printf("Encrypted.From = %v\n", encTicket.From)
+	fmt.Printf("Encrypted.Till = %v\n", encTicket.Till)
+	fmt.Printf("Encrypted.RenewTill = %v\n", encTicket.RenewTill)
+	fmt.Printf("Encrypted.Addresses = %v\n", encTicket.Addresses)
+	//fmt.Printf("Encrypted.AuthorizationData = %v\n", encTicket.AuthorizationData)
+	for i, entry := range encTicket.AuthorizationData {
+		fmt.Printf("Encrypted.AuthorizationData[%d] Type: %d\n%s\n", i, entry.Type, hex.Dump(entry.Data))
+		if entry.Type == 1 {
+			fmt.Printf("AD-IF-RELEVANT\n")
+			ifRelevant := []authorizationData{}
+			mustUnmarshal(entry.Data, &ifRelevant, "")
+			for _, authData := range ifRelevant {
+				if authData.Type == 128 { // WIN2K-PAC
+					fmt.Printf("\tType: %d\n%s\n", authData.Type, hex.Dump(authData.Data))
+				} // else ignore
+			}
+		}
+		// Else ignored
+	}
+}
+
+// TODO - move elsewhere
 
 // GenerateTicket generates a local ticket that a client can use to
 // authenticate against this credential.

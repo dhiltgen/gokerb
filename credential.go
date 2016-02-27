@@ -488,3 +488,7 @@ func (c *Credential) Principal() string {
 func (c *Credential) Realm() string {
 	return c.realm
 }
+
+func (c *Credential) Dump() string {
+	return fmt.Sprintf("%s %s kvno=%d algo=%d", c.Principal(), c.Realm(), c.kvno, c.key.EncryptAlgo(-1))
+}

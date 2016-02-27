@@ -865,11 +865,12 @@ func loadKey(algo int, key []byte) (key, error) {
 	case cryptAes128CtsHmac, cryptAes256CtsHmac:
 		return &aeshmac{key, algo}, nil
 	}
-	fmt.Println("XXX loadKey")
+	fmt.Printf("XXX loadKey called with unsupported algorithm: %d\n", algo)
 	return nil, ErrProtocol
 }
 
 func loadStringKey(algo int, pass, salt string) (key, error) {
+	fmt.Printf("XXX Loading string key with algorithm %d\n", algo)
 	if len(pass) == 0 {
 		fmt.Println("XXX loadStringKey no pass")
 		return nil, ErrProtocol
@@ -878,7 +879,7 @@ func loadStringKey(algo int, pass, salt string) (key, error) {
 	switch algo {
 	case cryptRc4Hmac:
 		if len(salt) > 0 {
-			fmt.Println("XXX loadStringKey salt")
+			fmt.Println("XXX loadStringKey salt for a proto without salt")
 			return nil, ErrProtocol
 		}
 		return &rc4hmac{rc4HmacKey(pass)}, nil
@@ -889,7 +890,7 @@ func loadStringKey(algo int, pass, salt string) (key, error) {
 		return &aeshmac{aeshmacKey(pass, salt, 4096, algo), algo}, nil // XXX lookup iterations from kerb
 	}
 
-	fmt.Println("XXX loadStringKey fallthru")
+	fmt.Println("XXX loadStringKey fallthru (unsupported type)")
 	return nil, ErrProtocol
 }
 

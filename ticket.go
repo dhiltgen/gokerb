@@ -575,8 +575,7 @@ func DecodePAC(authData restriction) error {
 		fmt.Printf("PAC[%d] type:%d size:%d offset:%d\n", i, pib.Type, pib.BufferSize, pib.Offset)
 		switch pib.Type {
 		case 1: // Logon information
-			// Shift 4 bytes to compensate for the authData header
-			DecodeLogonInfo(authData.Data[int(pib.Offset)-4 : int(pib.Offset)+int(pib.BufferSize)-4])
+			DecodeLogonInfo(authData.Data[int(pib.Offset) : int(pib.Offset)+int(pib.BufferSize)])
 		}
 		// TODO - other cases
 	}
@@ -587,181 +586,91 @@ func DecodePAC(authData restriction) error {
 // Pass in the byte slice already at right offset/length
 func DecodeLogonInfo(data []byte) (*KerbValidationInfo, error) {
 	fmt.Printf("Got buffer length: %d\n", len(data))
+	// First 20 bytes are RPC serialization crap
+	// Next 48 are time values we don't care about
+	fmt.Println(hex.Dump(data[20+48:]))
+	buf := bytes.NewReader(data[20+48:])
+	s, err := decodeString(buf)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("EffectiveName: %s\n", s)
+
 	li := KerbValidationInfo{}
-	buf := bytes.NewReader(data)
-	err := binary.Read(buf, binary.LittleEndian, &li.LogonTime)
-	if err != nil {
-		return nil, err
-	}
-	fmt.Printf("LogonTime: %x\n", li.LogonTime)
-	err = binary.Read(buf, binary.LittleEndian, &li.LogoffTime)
-	if err != nil {
-		return nil, err
-	}
-	fmt.Printf("LogoffTime: %x\n", li.LogoffTime)
-	err = binary.Read(buf, binary.LittleEndian, &li.KickOffTime)
-	if err != nil {
-		return nil, err
-	}
-	fmt.Printf("KickOffTime: %x\n", li.KickOffTime)
-	err = binary.Read(buf, binary.LittleEndian, &li.PasswordLastSet)
-	if err != nil {
-		return nil, err
-	}
-	fmt.Printf("PasswordLastSet: %x\n", li.PasswordLastSet)
-	err = binary.Read(buf, binary.LittleEndian, &li.PasswordCanChange)
-	if err != nil {
-		return nil, err
-	}
-	fmt.Printf("PasswordCanChange: %x\n", li.PasswordCanChange)
-	err = binary.Read(buf, binary.LittleEndian, &li.PasswordMustChange)
-	if err != nil {
-		return nil, err
-	}
-	fmt.Printf("PasswordMustChange: %x\n", li.PasswordMustChange)
-	// read in an RPC_UNICODE_STRING
-	decodeString := func() (string, error) {
-		var length uint16
-		var maxLength uint16
-		err := binary.Read(buf, binary.LittleEndian, &length)
-		if err != nil {
-			return "", err
-		}
-		err = binary.Read(buf, binary.LittleEndian, &maxLength)
-		if err != nil {
-			return "", err
-		}
-		fmt.Printf("XXX string: %x %x\n", length, maxLength)
-		if length == 0 {
-			return "", nil
-		}
-		wcharString := make([]uint16, length/2, length/2)
-		err = binary.Read(buf, binary.LittleEndian, &wcharString)
-		if err != nil {
-			return "", err
-		}
-		return string(utf16.Decode(wcharString)), nil
-
-	}
-	li.EffectiveName, err = decodeString()
-	if err != nil {
-		return nil, err
-	}
-	li.FullName, err = decodeString()
-	if err != nil {
-		return nil, err
-	}
-	li.EffectiveName, err = decodeString()
-	if err != nil {
-		return nil, err
-	}
-	li.FullName, err = decodeString()
-	if err != nil {
-		return nil, err
-	}
-	li.LogonScript, err = decodeString()
-	if err != nil {
-		return nil, err
-	}
-	li.ProfilePath, err = decodeString()
-	if err != nil {
-		return nil, err
-	}
-	li.HomeDirectory, err = decodeString()
-	if err != nil {
-		return nil, err
-	}
-	li.HomeDirectoryDrive, err = decodeString()
-	if err != nil {
-		return nil, err
-	}
-
-	err = binary.Read(buf, binary.LittleEndian, &li.LogonCount)
-	if err != nil {
-		return nil, err
-	}
-	err = binary.Read(buf, binary.LittleEndian, &li.BadPasswordCount)
-	if err != nil {
-		return nil, err
-	}
-	err = binary.Read(buf, binary.LittleEndian, &li.UserId)
-	if err != nil {
-		return nil, err
-	}
-	err = binary.Read(buf, binary.LittleEndian, &li.PrimaryGroupId)
-	if err != nil {
-		return nil, err
-	}
-	err = binary.Read(buf, binary.LittleEndian, &li.GroupCount)
-	if err != nil {
-		return nil, err
-	}
-	groups := make([]uint32, li.GroupCount, li.GroupCount)
-	err = binary.Read(buf, binary.LittleEndian, &groups)
-	if err != nil {
-		return nil, err
-	}
-	li.GroupIds = groups[:]
-	err = binary.Read(buf, binary.LittleEndian, &li.UserFlags)
-	if err != nil {
-		return nil, err
-	}
-	err = binary.Read(buf, binary.LittleEndian, &li.UserSessionKey)
-	if err != nil {
-		return nil, err
-	}
-	li.LogonServer, err = decodeString()
-	if err != nil {
-		return nil, err
-	}
-	li.LogonDomainName, err = decodeString()
-	if err != nil {
-		return nil, err
-	}
-
+	mustUnmarshal(data, &li, "")
 	return &li, nil
 }
 
+func decodeString(buf io.Reader) (string, error) {
+	var length uint16
+	var maxLength uint16
+	err := binary.Read(buf, binary.LittleEndian, &length)
+	if err != nil {
+		return "", err
+	}
+	err = binary.Read(buf, binary.LittleEndian, &maxLength)
+	if err != nil {
+		return "", err
+	}
+	fmt.Printf("XXX string: %x %x\n", length, maxLength)
+	if length == 0 {
+		return "", nil
+	}
+	// Drain the header we don't care about
+	var header uint32
+	err = binary.Read(buf, binary.LittleEndian, &header)
+	if err != nil {
+		return "", err
+	}
+	wcharString := make([]uint16, length/2, length/2)
+	err = binary.Read(buf, binary.LittleEndian, &wcharString)
+	if err != nil {
+		return "", err
+	}
+	//fmt.Printf(hex.Dump(wcharString))
+	return string(utf16.Decode(wcharString)), nil
+}
+
 type KerbValidationInfo struct {
-	LogonTime          uint64
-	LogoffTime         uint64
-	KickOffTime        uint64
-	PasswordLastSet    uint64
-	PasswordCanChange  uint64
-	PasswordMustChange uint64
-	EffectiveName      string
-	FullName           string
-	LogonScript        string
-	ProfilePath        string
-	HomeDirectory      string
-	HomeDirectoryDrive string
-	LogonCount         uint16
-	BadPasswordCount   uint16
-	UserId             uint32
-	PrimaryGroupId     uint32
-	GroupCount         uint32
-	GroupIds           []uint32 //[size_is(GroupCount)]
-
-	UserFlags       uint32
-	UserSessionKey  [16]byte
-	LogonServer     string
-	LogonDomainName string
+	LogonTime          uint64 `asn1:"tag:0"`
+	LogoffTime         uint64 `asn1:"tag:1"`
+	KickOffTime        uint64 `asn1:"tag:2"`
+	PasswordLastSet    uint64 `asn1:"tag:3"`
+	PasswordCanChange  uint64 `asn1:"tag:4"`
+	PasswordMustChange uint64 `asn1:"tag:5"`
 	/*
-	   TODO - map remaining fields
-	    PISID LogonDomainId // This one is kinda ugly, and we don't care, so I stopped here...
-	    Reserved1 [2]uint32
-	    UserAccountControl uint32
-	    Reserved3 [7]uint32
-	    SidCount uint32
+		EffectiveName      string   `asn1:"tag:6"`
+		FullName           string   `asn1:"tag:7"`
+		LogonScript        string   `asn1:"tag:8"`
+		ProfilePath        string   `asn1:"tag:9"`
+		HomeDirectory      string   `asn1:"tag:10"`
+		HomeDirectoryDrive string   `asn1:"tag:11"`
+		LogonCount         uint16   `asn1:"tag:12"`
+		BadPasswordCount   uint16   `asn1:"tag:13"`
+		UserId             uint32   `asn1:"tag:14"`
+		PrimaryGroupId     uint32   `asn1:"tag:15"`
+		GroupCount         uint32   `asn1:"tag:16"`
+		GroupIds           []uint32 `asn1:"tag:17"`
+		UserFlags          uint32   `asn1:"tag:18"`
+		UserSessionKey     [16]byte `asn1:"tag:19"`
+		LogonServer        string   `asn1:"tag:20"`
+		LogonDomainName    string   `asn1:"tag:21"`
+		/*
+		   TODO - map remaining fields
+		    PISID LogonDomainId // This one is kinda ugly, and we don't care, so I stopped here...
+		    Reserved1 [2]uint32
+		    UserAccountControl uint32
+		    Reserved3 [7]uint32
+		    SidCount uint32
 
-	    [size_is(SidCount)]
-	    PKERB_SID_AND_ATTRIBUTES ExtraSids;
+		    [size_is(SidCount)]
+		    PKERB_SID_AND_ATTRIBUTES ExtraSids;
 
-	    PISID ResourceGroupDomainSid
-	    ResourceGroupCount uint32
+		    PISID ResourceGroupDomainSid
+		    ResourceGroupCount uint32
 
-	    [size_is(ResourceGroupCount)]
-	    PGROUP_MEMBERSHIP ResourceGroupIds
+		    [size_is(ResourceGroupCount)]
+		    PGROUP_MEMBERSHIP ResourceGroupIds
 	*/
 }
 
